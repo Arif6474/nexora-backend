@@ -1,0 +1,1 @@
+export const RECEPIENTS = ['arifulislam64743@gmail.com']

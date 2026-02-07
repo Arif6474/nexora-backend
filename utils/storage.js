@@ -1,0 +1,23 @@
+import multer from 'multer';
+import { S3Client } from '@aws-sdk/client-s3';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const s3Client = new S3Client({
+    region: 'auto',
+    endpoint: process.env.R2_ENDPOINT,
+    credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+});
+
+const bucketName = process.env.R2_BUCKET_NAME;
+
+export const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+});
+
+export { s3Client, bucketName };
