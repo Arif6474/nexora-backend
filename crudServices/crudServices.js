@@ -5,11 +5,18 @@ import { deleteFile } from "#utils/deleteFile.js";
 const getAllDocuments = async ({ model, req, res, sortBy }) => {
     const { search, filter } = req.query
     const query = {}
+    const schemaPaths = model.schema.paths;
     if (search) {
-        query.$or = [
-            { name: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } }
-        ]
+        const orConditions = [];
+        if (schemaPaths.name && schemaPaths.name.instance === 'String') {
+            orConditions.push({ name: { $regex: search, $options: 'i' } });
+        }
+        if (schemaPaths.email && schemaPaths.email.instance === 'String') {
+            orConditions.push({ email: { $regex: search, $options: 'i' } });
+        }
+        if (orConditions.length > 0) {
+            query.$or = orConditions;
+        }
     }
     if (filter === 'Active') {
         query.isActive = true
@@ -22,10 +29,9 @@ const getAllDocuments = async ({ model, req, res, sortBy }) => {
         query.isVerified = false
     }
     try {
-        const schemaPaths = model.schema.paths;
         const refs = Object.keys(schemaPaths)
-            .filter((key) => schemaPaths[key].instance === 'ObjectID' && schemaPaths[key].options.ref)
-            .map((key) => schemaPaths[key].options.path);
+            .filter((key) => schemaPaths[key].instance === 'ObjectId' && schemaPaths[key].options.ref)
+            .map((key) => schemaPaths[key].path);
 
         const documents = await model.find(query).populate(refs).sort(sortBy);;
 
@@ -186,23 +192,29 @@ const getDocumentsWithQuery = async ({ model, req, res, filters }) => {
         // const filters = req.query.filters ? JSON.parse(req.query.filters) : {}
 
 
-        const searchCondition = {
-            $or: [
-                { name: { $regex: searchQuery, $options: 'i' } },
-                { title: { $regex: searchQuery, $options: 'i' } },
-                { email: { $regex: searchQuery, $options: 'i' } },
-                { description: { $regex: searchQuery, $options: 'i' } },
-                { orderId: { $regex: searchQuery, $options: 'i' } },
-                { phone: { $regex: searchQuery, $options: 'i' } },
-                { questionText: { $regex: searchQuery, $options: 'i' } },
-                { isLinkOrImage: { $regex: searchQuery, $options: 'i' } },
-                { size: { $regex: searchQuery, $options: 'i' } },
-                { 'itemSize.size': { $regex: searchQuery, $options: 'i' } },
-                { 'item.title': { $regex: searchQuery, $options: 'i' } },
+        const schemaPaths = model.schema.paths;
+        const stringFields = Object.keys(schemaPaths).filter(path => {
+            return schemaPaths[path].instance === 'String';
+        });
 
-                // { category: { $regex: searchQuery, $options: 'i' } },
-            ]
-        };
+        const searchFields = [
+            'name', 'title', 'email', 'description', 'orderId',
+            'phone', 'questionText', 'isLinkOrImage', 'size'
+        ];
+
+        const validSearchFields = searchFields.filter(field => stringFields.includes(field));
+
+        const searchCondition = {};
+        if (searchQuery && validSearchFields.length > 0) {
+            searchCondition.$or = validSearchFields.map(field => ({
+                [field]: { $regex: searchQuery, $options: 'i' }
+            }));
+
+            // Add nested search cases manually if they are relevant and exists in some models
+            // These might need more specific handling if they are common across models
+            searchCondition.$or.push({ 'itemSize.size': { $regex: searchQuery, $options: 'i' } });
+            searchCondition.$or.push({ 'item.title': { $regex: searchQuery, $options: 'i' } });
+        }
 
         // Explicitly handle category filter from query params
         if (req.query.category) {
@@ -221,8 +233,6 @@ const getDocumentsWithQuery = async ({ model, req, res, filters }) => {
                 }
             });
         }
-
-        const schemaPaths = model.schema.paths;
         const refs = Object.keys(schemaPaths)
             .filter((key) => schemaPaths[key].instance === 'ObjectId' && schemaPaths[key].options.ref)
             .map((key) => schemaPaths[key].path);

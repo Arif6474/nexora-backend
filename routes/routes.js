@@ -4,7 +4,7 @@ import employeeAppRoutes from "./employeeAppRoutes/employeeAppRoutes.js";
 
 const router = Router();
 
-router.use('/api', consumerAppRoutes);
+// router.use('/api', consumerAppRoutes);
 router.use('/customerApp', consumerAppRoutes);
 router.use('/employeeApp', employeeAppRoutes);
 

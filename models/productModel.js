@@ -42,6 +42,15 @@ const productSchema = new Schema({
         type: Boolean,
         default: false,
     },
+    gender: {
+        type: String,
+        enum: ['Men', 'Women', 'Unisex', 'Kids'],
+        default: 'Unisex',
+    },
+    discount: {
+        type: Number,
+        default: 0,
+    },
     serial: {
         type: Number,
     },
