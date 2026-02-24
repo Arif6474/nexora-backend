@@ -1,22 +1,33 @@
+import brandModel from '#models/brandModel.js';
 import categoryModel from '#models/categoryModel.js'
 import productColorModel from '#models/productColorModel.js';
 import productModel from '#models/productModel.js';
 import productSizeModel from '#models/productSizeModel.js';
+import subcategoryModel from '#models/subcategoryModel.js';
 import asyncHandler from 'express-async-handler'
 
 const getHomePageData = asyncHandler(async (req, res) => {
-    const featuredCategories = await categoryModel.find({ isFeatured: true, isActive: true })
     const featuredProducts = await productModel.find({ isFeatured: true, isActive: true }).sort({ serial: 1 })
-
+    const latestProducts = await productModel.find({ isActive: true }).sort({ createdAt: -1 }).limit(10)
     res.status(200).json({
-        featuredCategories,
-        featuredProducts
+        featuredProducts,
+        latestProducts
     })
 })
 
 const getAllProductCategories = asyncHandler(async (req, res) => {
     const categories = await categoryModel.find({ isActive: true }).sort({ serial: 1 });
     res.status(200).json(categories);
+})
+
+const getAllBrands = asyncHandler(async (req, res) => {
+    const brands = await brandModel.find({ isActive: true }).sort({ serial: 1 });
+    res.status(200).json(brands);
+})
+const getSubCategoriesByCategoryId = asyncHandler(async (req, res) => {
+    const { categoryId } = req.params;
+    const subCategories = await subcategoryModel.find({ category: categoryId, isActive: true }).sort({ serial: 1 });
+    res.status(200).json(subCategories);
 })
 
 const getSingleProductDetails = asyncHandler(async (req, res) => {
@@ -68,23 +79,16 @@ const getAllProductsWithSearch = asyncHandler(async (req, res) => {
 });
 
 const getAllProductsWithQuery = asyncHandler(async (req, res) => {
-    const { category, searchQuery, productCategory, sortBy } = req.query;
+    const { category, searchQuery, subcategory, brand, sortBy } = req.query;
 
     const filters = {};
     if (category) filters.category = category;
     if (searchQuery && searchQuery !== "null") filters.title = { $regex: searchQuery, $options: 'i' };
+    if (subcategory && subcategory !== "null") filters.subcategory = subcategory;
+    if (brand && brand !== "null") filters.brand = brand;
     filters.isActive = true;
 
-    // Step 1: If productCategory is provided, find its ID
-    if (productCategory && productCategory !== "null") {
-        const categoryDoc = await categoryModel.findOne({ slug: productCategory, isActive: true });
-        if (categoryDoc) {
-            filters.category = categoryDoc._id;
-        } else {
-            // No category found, return empty
-            return res.status(200).json([]);
-        }
-    }
+
 
     // Step 2: Determine sort options
     let sortOptions = {};
@@ -126,5 +130,7 @@ export {
     getSingleProductDetails,
     getAllProductsWithSearch,
     getSingleProductBySlug,
-    getAllProductsWithQuery
+    getAllProductsWithQuery,
+    getSubCategoriesByCategoryId,
+    getAllBrands
 }

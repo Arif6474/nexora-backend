@@ -9,6 +9,7 @@ import orderRoutes from "./orderRoutes.js";
 import promoCodeRoutes from "./promoCodeRoutes.js";
 import subcategoryRoutes from "./subcategoryRoutes.js";
 import productImageRoutes from "./productImageRoutes.js";
+import brandRoutes from "./brandRoutes.js";
 
 const protectedRoutes = Router();
 
@@ -22,5 +23,6 @@ protectedRoutes.use('/subcategory', subcategoryRoutes);
 protectedRoutes.use('/order', orderRoutes);
 protectedRoutes.use('/productImage', productImageRoutes);
 protectedRoutes.use('/promoCode', promoCodeRoutes);
+protectedRoutes.use('/brand', brandRoutes);
 
 export default protectedRoutes;

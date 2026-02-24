@@ -7,10 +7,15 @@ const productSchema = new Schema({
         ref: 'Category',
         required: [true, 'Please provide a category'],
     },
-    subCategory: {
+    subcategory: {
         type: Schema.Types.ObjectId,
-        ref: 'SubCategory',
+        ref: 'Subcategory',
     },
+    brand: {
+        type: Schema.Types.ObjectId,
+        ref: 'Brand',
+    },
+
     sku: {
         type: String,
         unique: true,
