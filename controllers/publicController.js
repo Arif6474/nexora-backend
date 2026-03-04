@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import brandModel from '#models/brandModel.js';
 import categoryModel from '#models/categoryModel.js'
 import productColorModel from '#models/productColorModel.js';
@@ -119,12 +120,43 @@ const getAllProductsWithQuery = asyncHandler(async (req, res) => {
 const getSingleProductBySlug = asyncHandler(async (req, res) => {
     const { slug } = req.params;
 
-    const product = await productModel.findOne({ slug })
+    // Fetch the product details, populate 'category', 'brand', and 'subcategory'
+    let product = await productModel.findOne({ slug, isActive: true }).populate('category').populate('brand').populate('subcategory').exec();
+
+    // Fallback: If not found by slug, and slug is a valid ObjectId, try finding by ID
+    if (!product && mongoose.Types.ObjectId.isValid(slug)) {
+        product = await productModel.findOne({ _id: slug, isActive: true }).populate('category').populate('brand').populate('subcategory').exec();
+    }
 
     if (!product) {
         return res.status(404).json({ message: 'Product not found' });
     }
-    res.status(200).json(product);
+
+    // Fetch product images, populate 'color', and sort by 'serial'
+    const productColors = await productColorModel.find({ product: product._id, isActive: true }).populate('color').sort({ serial: 1 });
+
+    // Fetch product sizes, populate 'size', and sort by 'serial' from the Size model
+    const productSizes = await productSizeModel.find({ product: product._id, isActive: true }).populate('size');
+    const sortedProductSizes = productSizes.sort((a, b) => (a.size?.serial || 0) - (b.size?.serial || 0));
+
+    // Fetch all product images
+    const productImages = await productImageModel.find({ product: product._id, isActive: true }).sort({ serial: 1 });
+
+    // Fetch related products (same category, different product)
+    const relatedProducts = await productModel.find({
+        category: product.category._id,
+        _id: { $ne: product._id },
+        isActive: true
+    }).populate('category').populate('brand').populate('subcategory').limit(8).sort({ serial: 1 });
+
+    // Send the response with the product, product images, product sizes, and related products
+    res.status(200).json({
+        product,
+        productColors,
+        productSizes: sortedProductSizes,
+        productImages,
+        relatedProducts
+    });
 });
 
 export {

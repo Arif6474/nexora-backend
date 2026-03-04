@@ -75,7 +75,9 @@ export const createOrder = async (req, res) => {
                 quantity: item.quantity,
                 unitPrice: item.unitPrice,
                 totalPrice: item.totalPrice,
-                variant: item.variant
+                variant: item.variant,
+                color: item.color,
+                size: item.size
             }))
         });
 

@@ -47,6 +47,8 @@ const orderSchema = Schema({
       unitPrice: { type: Number, required: true },
       totalPrice: { type: Number, required: true },
       variant: { type: String },
+      color: { type: String },
+      size: { type: String },
     }
   ]
 }, { timestamps: true });
