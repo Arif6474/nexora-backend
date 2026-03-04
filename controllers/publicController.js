@@ -1,6 +1,7 @@
 import brandModel from '#models/brandModel.js';
 import categoryModel from '#models/categoryModel.js'
 import productColorModel from '#models/productColorModel.js';
+import productImageModel from '#models/productImageModel.js';
 import productModel from '#models/productModel.js';
 import productSizeModel from '#models/productSizeModel.js';
 import subcategoryModel from '#models/subcategoryModel.js';
@@ -46,7 +47,8 @@ const getSingleProductDetails = asyncHandler(async (req, res) => {
     // Fetch product sizes, populate 'size', and sort by 'serial' from the Size model
     // Note: Assuming size model has serial field, if not, might need adjustment
     const productSizes = await productSizeModel.find({ product: product._id, isActive: true }).populate('size');
-
+    const sortedProductSizes = productSizes.sort((a, b) => a.size.serial - b.size.serial);
+    const productImages = await productImageModel.find({ product: product._id, isActive: true }).sort({ serial: 1 });
     // Sort productSizes array by the 'serial' field of the populated 'size' field if available, or just return as is
     // const sortedProductSizes = productSizes.sort((a, b) => a.size.serial - b.size.serial); 
     // Simplified for now as Size model structure wasn't fully detailed in previous steps but assuming standard structure
@@ -55,7 +57,8 @@ const getSingleProductDetails = asyncHandler(async (req, res) => {
     res.status(200).json({
         product,
         productColors,
-        productSizes,
+        productSizes: sortedProductSizes,
+        productImages
     });
 });
 
