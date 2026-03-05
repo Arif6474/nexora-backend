@@ -10,9 +10,11 @@ import promoCodeRoutes from "./promoCodeRoutes.js";
 import subcategoryRoutes from "./subcategoryRoutes.js";
 import productImageRoutes from "./productImageRoutes.js";
 import brandRoutes from "./brandRoutes.js";
+import dashboardRoutes from "./dashboardRoutes.js";
 
 const protectedRoutes = Router();
 
+protectedRoutes.use('/dashboard', dashboardRoutes);
 protectedRoutes.use('/product', productRoutes);
 protectedRoutes.use('/productColor', productColorRoutes);
 protectedRoutes.use('/productSize', productSizeRoutes);
