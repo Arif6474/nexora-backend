@@ -18,6 +18,7 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
 
     // 2. Total Pending Orders
     const totalPendingOrders = await Order.countDocuments({ orderStatus: 'Pending' });
+    const totalDeliveredOrders = await Order.countDocuments({ orderStatus: 'Delivered' });
 
     // 3. Total Active Products
     const totalActiveProducts = await Product.countDocuments({ isActive: true });
@@ -53,6 +54,7 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
         stats: {
             totalSales,
             totalPendingOrders,
+            totalDeliveredOrders,
             totalActiveProducts,
             totalCustomers
         },
