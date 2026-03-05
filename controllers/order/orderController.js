@@ -108,7 +108,7 @@ export const getOrderById = async (req, res) => {
         const { orderId } = req.params;
 
         const order = await Order.findById(orderId)
-            .populate('customer', 'name email')
+            .populate('customer', 'name email phone')
             .populate('products.product')
             .populate('promoCode', 'code discountType discountValue');
 
@@ -288,7 +288,7 @@ export const getSingleOrder = async (req, res) => {
         const { orderId } = req.params;
 
         const order = await Order.findById(orderId)
-            .populate('customer', '-password')
+            .populate('customer', 'name email phone')
             .populate('products.product')
             .populate('promoCode');
 
