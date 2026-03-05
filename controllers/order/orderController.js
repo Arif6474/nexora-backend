@@ -91,25 +91,15 @@ export const createOrder = async (req, res) => {
     }
 };
 
-// Get all orders (optionally filtered by customer or order status)
+// Get all orders (with pagination, search, and filtering)
 export const getOrders = async (req, res) => {
-    try {
-        const { customerId, orderStatus } = req.query;
+    const filters = {};
+    const { customerId, orderStatus } = req.query;
 
-        const filter = {};
+    if (customerId) filters.customer = customerId;
+    if (orderStatus) filters.orderStatus = orderStatus;
 
-        if (customerId) filter.customer = customerId;
-        if (orderStatus) filter.orderStatus = orderStatus;
-
-        const orders = await Order.find(filter)
-            .populate('customer', 'name email')  // Populate customer details
-            .populate('products.product', 'title price');  // Populate product details
-
-        return res.status(200).json({ orders });
-    } catch (error) {
-        console.error(error);
-        return res.status(500).json({ message: 'Server error' });
-    }
+    await getDocumentsWithQuery({ model: Order, req, res, filters });
 };
 
 // Get a single order by ID
@@ -119,7 +109,7 @@ export const getOrderById = async (req, res) => {
 
         const order = await Order.findById(orderId)
             .populate('customer', 'name email')
-            .populate('products.product', 'title price')
+            .populate('products.product')
             .populate('promoCode', 'code discountType discountValue');
 
         if (!order) {
