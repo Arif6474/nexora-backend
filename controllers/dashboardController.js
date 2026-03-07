@@ -61,3 +61,52 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
         topSellingProducts
     });
 });
+
+export const getOrdersReport = asyncHandler(async (req, res) => {
+    const { startDate, endDate, groupBy = 'day' } = req.query;
+
+    const filters = {};
+    if (startDate || endDate) {
+        filters.createdAt = {};
+        if (startDate) filters.createdAt.$gte = new Date(startDate);
+        if (endDate) {
+            const end = new Date(endDate);
+            end.setHours(23, 59, 59, 999);
+            filters.createdAt.$lte = end;
+        }
+    }
+
+    let groupFormat;
+    switch (groupBy) {
+        case 'month':
+            groupFormat = '%Y-%m';
+            break;
+        case 'week':
+            groupFormat = '%Y-%U';
+            break;
+        case 'day':
+        default:
+            groupFormat = '%Y-%m-%d';
+    }
+
+    const report = await Order.aggregate([
+        { $match: filters },
+        {
+            $group: {
+                _id: { $dateToString: { format: groupFormat, date: '$createdAt' } },
+                totalOrders: { $sum: 1 },
+                totalSales: { $sum: '$finalAmount' },
+                totalDiscount: { $sum: '$discount' },
+                deliveredCount: {
+                    $sum: { $cond: [{ $eq: ['$orderStatus', 'Delivered'] }, 1, 0] }
+                },
+                pendingCount: {
+                    $sum: { $cond: [{ $eq: ['$orderStatus', 'Pending'] }, 1, 0] }
+                }
+            }
+        },
+        { $sort: { _id: -1 } }
+    ]);
+
+    res.status(200).json({ report });
+});
