@@ -42,7 +42,7 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
     // Populate product details for top sellers
     const topSellingProducts = await Promise.all(
         topSellingData.map(async (item) => {
-            const product = await Product.findById(item._id).select('title image price slug');
+            const product = await Product.findById(item._id).select('title image price slug sku');
             return {
                 ...product?.toObject(),
                 totalSold: item.totalSold

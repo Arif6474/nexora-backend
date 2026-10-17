@@ -6,7 +6,7 @@ export async function sendModeratorInvitationEmail(recepient, link) {
 
   const message = `<p>Click <a href="${link}">Here</a><br> Valid For 24 Hours</p>`
 
-  await sendEmailWithResend(recepient, 'Maverick Invitation', message)
+  await sendEmailWithResend(recepient, 'Nexora Invitation', message)
 }
 
 export async function sendForgotPasswordMail(recepient, link) {
