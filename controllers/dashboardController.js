@@ -65,24 +65,40 @@ export const getDashboardStats = asyncHandler(async (req, res) => {
 export const getOrdersReport = asyncHandler(async (req, res) => {
     const { startDate, endDate, groupBy = 'day' } = req.query;
 
-    const filters = {};
+    const filters = {
+        orderStatus: 'Delivered',
+        isActive: { $ne: false },
+    };
+
     if (startDate || endDate) {
         filters.createdAt = {};
-        if (startDate) filters.createdAt.$gte = new Date(startDate);
+        if (startDate) {
+            if (typeof startDate === 'string' && startDate.length === 10) {
+                const [y, m, d] = startDate.split('-').map(Number);
+                filters.createdAt.$gte = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+            } else {
+                filters.createdAt.$gte = new Date(startDate);
+            }
+        }
         if (endDate) {
-            const end = new Date(endDate);
-            end.setHours(23, 59, 59, 999);
-            filters.createdAt.$lte = end;
+            if (typeof endDate === 'string' && endDate.length === 10) {
+                const [y, m, d] = endDate.split('-').map(Number);
+                filters.createdAt.$lte = new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
+            } else {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                filters.createdAt.$lte = end;
+            }
         }
     }
 
     let groupFormat;
     switch (groupBy) {
-        case 'month':
-            groupFormat = '%Y-%m';
+        case 'year':
+            groupFormat = '%Y-%m'; // Monthly breakdown for the year
             break;
-        case 'week':
-            groupFormat = '%Y-%U';
+        case 'month':
+            groupFormat = '%Y-%m-%d'; // Daily breakdown for the month
             break;
         case 'day':
         default:
@@ -97,16 +113,43 @@ export const getOrdersReport = asyncHandler(async (req, res) => {
                 totalOrders: { $sum: 1 },
                 totalSales: { $sum: '$finalAmount' },
                 totalDiscount: { $sum: '$discount' },
-                deliveredCount: {
-                    $sum: { $cond: [{ $eq: ['$orderStatus', 'Delivered'] }, 1, 0] }
-                },
-                pendingCount: {
-                    $sum: { $cond: [{ $eq: ['$orderStatus', 'Pending'] }, 1, 0] }
-                }
-            }
+                deliveredCount: { $sum: 1 },
+                totalItems: { $sum: { $size: { $ifNull: ['$products', []] } } },
+            },
         },
-        { $sort: { _id: -1 } }
+        { $sort: { _id: -1 } },
     ]);
 
-    res.status(200).json({ report });
+    // Fetch individual delivered orders for the period
+    const orders = await Order.find(filters)
+        .populate('customer', 'name email phone')
+        .populate('products.product', 'title price')
+        .sort({ createdAt: -1 })
+        .lean();
+
+    const summaryAgg = await Order.aggregate([
+        { $match: filters },
+        {
+            $group: {
+                _id: null,
+                totalOrders: { $sum: 1 },
+                totalSales: { $sum: '$finalAmount' },
+                totalDiscount: { $sum: '$discount' },
+                totalItems: { $sum: { $size: { $ifNull: ['$products', []] } } },
+            },
+        },
+    ]);
+
+    const summary = summaryAgg[0] || {
+        totalOrders: 0,
+        totalSales: 0,
+        totalDiscount: 0,
+        totalItems: 0,
+    };
+
+    res.status(200).json({
+        report,
+        orders,
+        summary,
+    });
 });
