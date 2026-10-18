@@ -199,7 +199,8 @@ const getDocumentsWithQuery = async ({ model, req, res, filters }) => {
 
         const searchFields = [
             'name', 'title', 'email', 'description', 'orderId',
-            'phone', 'questionText', 'isLinkOrImage', 'size'
+            'phone', 'questionText', 'isLinkOrImage', 'size',
+            'author', 'content', 'role'
         ];
 
         const validSearchFields = searchFields.filter(field => stringFields.includes(field));
