@@ -6,15 +6,23 @@ import productImageModel from '#models/productImageModel.js';
 import productModel from '#models/productModel.js';
 import productSizeModel from '#models/productSizeModel.js';
 import subcategoryModel from '#models/subcategoryModel.js';
+import testimonialModel from '#models/testimonialModel.js';
 import asyncHandler from 'express-async-handler'
 
 const getHomePageData = asyncHandler(async (req, res) => {
     const featuredProducts = await productModel.find({ isFeatured: true, isActive: true }).sort({ serial: 1 })
     const latestProducts = await productModel.find({ isActive: true }).sort({ createdAt: -1 }).limit(10)
+    const testimonials = await testimonialModel.find({ isActive: true }).sort({ serial: 1, createdAt: -1 })
     res.status(200).json({
         featuredProducts,
-        latestProducts
+        latestProducts,
+        testimonials
     })
+})
+
+const getAllTestimonials = asyncHandler(async (req, res) => {
+    const testimonials = await testimonialModel.find({ isActive: true }).sort({ serial: 1, createdAt: -1 })
+    res.status(200).json(testimonials)
 })
 
 const getAllProductCategories = asyncHandler(async (req, res) => {
@@ -167,5 +175,6 @@ export {
     getSingleProductBySlug,
     getAllProductsWithQuery,
     getSubCategoriesByCategoryId,
-    getAllBrands
+    getAllBrands,
+    getAllTestimonials
 }

@@ -11,6 +11,7 @@ import subcategoryRoutes from "./subcategoryRoutes.js";
 import productImageRoutes from "./productImageRoutes.js";
 import brandRoutes from "./brandRoutes.js";
 import dashboardRoutes from "./dashboardRoutes.js";
+import testimonialRoutes from "./testimonialRoutes.js";
 
 const protectedRoutes = Router();
 
@@ -26,5 +27,6 @@ protectedRoutes.use('/order', orderRoutes);
 protectedRoutes.use('/productImage', productImageRoutes);
 protectedRoutes.use('/promoCode', promoCodeRoutes);
 protectedRoutes.use('/brand', brandRoutes);
+protectedRoutes.use('/testimonial', testimonialRoutes);
 
 export default protectedRoutes;
