@@ -1,4 +1,5 @@
 import Customer from "#models/userModels/customerModel.js";
+import Order from "#models/order/orderModel.js";
 import jwt from 'jsonwebtoken'
 import bcrypt from 'bcryptjs'
 const { genSalt, hash, compare } = bcrypt
@@ -221,6 +222,146 @@ const updateProfile = async (req, res) => {
   res.status(200).json(updateProfileData);
 }
 
+// Admin / Employee operations for Customer management
+const getCustomersWithQuery = asyncHandler(async (req, res) => {
+  const page = parseInt(req.query.currentPage) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const search = req.query.search || '';
+  const filter = req.query.filter || '';
+
+  const query = {};
+
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: 'i' } },
+      { email: { $regex: search, $options: 'i' } },
+      { phone: { $regex: search, $options: 'i' } },
+      { address: { $regex: search, $options: 'i' } },
+    ];
+  }
+
+  if (filter === 'Active') {
+    query.isActive = true;
+  } else if (filter === 'Archived') {
+    query.isActive = false;
+  }
+
+  const totalCount = await Customer.countDocuments(query);
+  const totalPages = Math.ceil(totalCount / limit) || 1;
+
+  const customers = await Customer.find(query)
+    .select('-password')
+    .sort({ createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  const customerIds = customers.map(c => c._id);
+  const orderAgg = await Order.aggregate([
+    { $match: { customer: { $in: customerIds } } },
+    {
+      $group: {
+        _id: "$customer",
+        totalOrders: { $sum: 1 },
+        totalSpent: {
+          $sum: {
+            $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$finalAmount", 0]
+          }
+        }
+      }
+    }
+  ]);
+
+  const orderMap = {};
+  orderAgg.forEach(item => {
+    orderMap[String(item._id)] = {
+      totalOrders: item.totalOrders,
+      totalSpent: item.totalSpent
+    };
+  });
+
+  const documents = customers.map(c => ({
+    ...c,
+    orderCount: orderMap[String(c._id)]?.totalOrders || 0,
+    totalSpent: orderMap[String(c._id)]?.totalSpent || 0
+  }));
+
+  res.status(200).json({
+    totalItems: totalCount,
+    totalPages,
+    currentPage: page,
+    pageSize: limit,
+    documents
+  });
+});
+
+const getSingleCustomer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const customer = await Customer.findById(id).select('-password').lean();
+  if (!customer) {
+    return res.status(404).json({ message: 'Customer not found' });
+  }
+
+  const orders = await Order.find({ customer: customer._id })
+    .populate('products.product', 'title image price slug')
+    .sort({ createdAt: -1 })
+    .limit(10)
+    .lean();
+
+  const orderStats = await Order.aggregate([
+    { $match: { customer: customer._id } },
+    {
+      $group: {
+        _id: "$customer",
+        totalOrders: { $sum: 1 },
+        totalSpent: {
+          $sum: {
+            $cond: [{ $ne: ["$orderStatus", "Cancelled"] }, "$finalAmount", 0]
+          }
+        }
+      }
+    }
+  ]);
+
+  res.status(200).json({
+    ...customer,
+    orderCount: orderStats[0]?.totalOrders || 0,
+    totalSpent: orderStats[0]?.totalSpent || 0,
+    orders
+  });
+});
+
+const archiveCustomer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const customer = await Customer.findById(id);
+  if (!customer) {
+    return res.status(404).json({ message: 'Customer not found' });
+  }
+  customer.isActive = !customer.isActive;
+  await customer.save();
+  res.status(200).json(customer);
+});
+
+const updateCustomer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { name, phone, address, bio, isActive } = req.body;
+  const customer = await Customer.findByIdAndUpdate(
+    id,
+    { name, phone, address, bio, isActive },
+    { new: true }
+  ).select('-password');
+
+  if (!customer) {
+    return res.status(404).json({ message: 'Customer not found' });
+  }
+  res.status(200).json(customer);
+});
+
+const deleteCustomer = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  await Customer.findByIdAndDelete(id);
+  res.status(200).json({ message: 'Customer deleted successfully' });
+});
 
 export {
   loginCustomer,
@@ -230,5 +371,9 @@ export {
   getEmailFromToken,
   loginWithGoogle,
   updateProfile,
-
-}
+  getCustomersWithQuery,
+  getSingleCustomer,
+  archiveCustomer,
+  updateCustomer,
+  deleteCustomer
+};
