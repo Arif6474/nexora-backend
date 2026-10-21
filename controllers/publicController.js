@@ -72,20 +72,47 @@ const getSingleProductDetails = asyncHandler(async (req, res) => {
 });
 
 const getAllProductsWithSearch = asyncHandler(async (req, res) => {
-    const { searchQuery } = req.query;
+    const query = (req.query.searchQuery || req.query.search || "").trim();
 
-    if (!searchQuery) {
-        return res.status(400).json({ message: "Search query is required" });
+    if (!query) {
+        return res.status(200).json([]);
     }
 
-    const products = await productModel.find({
-        title: { $regex: searchQuery, $options: 'i' },
-        isActive: true
-    }).populate('category').sort({ createdAt: -1 });
+    const lowerQuery = query.toLowerCase();
+    const filters = { isActive: true };
 
-    if (products.length === 0) {
-        return res.status(404).json({ message: "No products found" });
+    if (lowerQuery === 'women' || lowerQuery === 'woman') {
+        filters.gender = { $in: ['Women', 'Unisex'] };
+    } else if (lowerQuery === 'men' || lowerQuery === 'man') {
+        filters.gender = { $in: ['Men', 'Unisex'] };
+    } else {
+        const matchedCats = await categoryModel.find({
+            $or: [
+                { name: { $regex: query, $options: 'i' } },
+                { slug: { $regex: query, $options: 'i' } },
+                { description: { $regex: query, $options: 'i' } }
+            ]
+        }).select('_id');
+
+        const matchedCatIds = matchedCats.map(c => c._id);
+
+        const searchConditions = [
+            { title: { $regex: query, $options: 'i' } },
+            { description: { $regex: query, $options: 'i' } },
+            { sku: { $regex: query, $options: 'i' } }
+        ];
+
+        if (matchedCatIds.length > 0) {
+            searchConditions.push({ category: { $in: matchedCatIds } });
+        }
+
+        filters.$or = searchConditions;
     }
+
+    const products = await productModel.find(filters)
+        .populate('category')
+        .sort({ createdAt: -1 })
+        .limit(20);
 
     res.status(200).json(products);
 });
