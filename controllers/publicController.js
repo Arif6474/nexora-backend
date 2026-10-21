@@ -91,16 +91,114 @@ const getAllProductsWithSearch = asyncHandler(async (req, res) => {
 });
 
 const getAllProductsWithQuery = asyncHandler(async (req, res) => {
-    const { category, searchQuery, subcategory, brand, sortBy } = req.query;
+    const { category, searchQuery, search, subcategory, brand, gender, sortBy } = req.query;
 
     const filters = {};
-    if (category) filters.category = category;
-    if (searchQuery && searchQuery !== "null") filters.title = { $regex: searchQuery, $options: 'i' };
-    if (subcategory && subcategory !== "null") filters.subcategory = subcategory;
-    if (brand && brand !== "null") filters.brand = brand;
+
+    // 1. Category filter: support ObjectId, slug, or name
+    if (category && category !== "null" && category.trim() !== "") {
+        if (mongoose.Types.ObjectId.isValid(category)) {
+            filters.category = category;
+        } else {
+            const matchedCategory = await categoryModel.findOne({
+                $or: [
+                    { slug: category },
+                    { name: { $regex: `^${category}$`, $options: 'i' } },
+                    { name: { $regex: category, $options: 'i' } }
+                ]
+            });
+            if (matchedCategory) {
+                filters.category = matchedCategory._id;
+            }
+        }
+    }
+
+    // 2. Subcategory filter: support ObjectId, slug, or name
+    if (subcategory && subcategory !== "null" && subcategory.trim() !== "") {
+        if (mongoose.Types.ObjectId.isValid(subcategory)) {
+            filters.subcategory = subcategory;
+        } else {
+            const matchedSubcategory = await subcategoryModel.findOne({
+                $or: [
+                    { slug: subcategory },
+                    { name: { $regex: subcategory, $options: 'i' } }
+                ]
+            });
+            if (matchedSubcategory) {
+                filters.subcategory = matchedSubcategory._id;
+            }
+        }
+    }
+
+    // 3. Brand filter: support ObjectId, slug, or name
+    if (brand && brand !== "null" && brand.trim() !== "") {
+        if (mongoose.Types.ObjectId.isValid(brand)) {
+            filters.brand = brand;
+        } else {
+            const matchedBrand = await brandModel.findOne({
+                $or: [
+                    { slug: brand },
+                    { name: { $regex: brand, $options: 'i' } }
+                ]
+            });
+            if (matchedBrand) {
+                filters.brand = matchedBrand._id;
+            }
+        }
+    }
+
+    // 4. Gender filter
+    const effectiveGender = (gender || "").trim();
+    if (effectiveGender && effectiveGender !== "null") {
+        const cleanGender = effectiveGender.toLowerCase();
+        if (cleanGender === 'women' || cleanGender === 'woman') {
+            filters.gender = { $in: ['Women', 'Unisex'] };
+        } else if (cleanGender === 'men' || cleanGender === 'man') {
+            filters.gender = { $in: ['Men', 'Unisex'] };
+        } else if (cleanGender === 'unisex') {
+            filters.gender = 'Unisex';
+        } else if (cleanGender === 'kids' || cleanGender === 'kid') {
+            filters.gender = 'Kids';
+        } else {
+            filters.gender = { $regex: effectiveGender, $options: 'i' };
+        }
+    }
+
+    // 5. Search filter (search or searchQuery)
+    const rawSearch = (searchQuery || search || "").trim();
+    if (rawSearch && rawSearch !== "null") {
+        const lowerSearch = rawSearch.toLowerCase();
+        // If search represents a gender and gender filter isn't already applied
+        if (!filters.gender && (lowerSearch === 'women' || lowerSearch === 'woman')) {
+            filters.gender = { $in: ['Women', 'Unisex'] };
+        } else if (!filters.gender && (lowerSearch === 'men' || lowerSearch === 'man')) {
+            filters.gender = { $in: ['Men', 'Unisex'] };
+        } else {
+            // Check if search matches category names
+            const matchedCats = await categoryModel.find({
+                $or: [
+                    { name: { $regex: rawSearch, $options: 'i' } },
+                    { slug: { $regex: rawSearch, $options: 'i' } },
+                    { description: { $regex: rawSearch, $options: 'i' } }
+                ]
+            }).select('_id');
+
+            const matchedCatIds = matchedCats.map(c => c._id);
+
+            const searchConditions = [
+                { title: { $regex: rawSearch, $options: 'i' } },
+                { description: { $regex: rawSearch, $options: 'i' } }
+            ];
+
+            if (matchedCatIds.length > 0) {
+                searchConditions.push({ category: { $in: matchedCatIds } });
+            }
+
+            filters.$or = searchConditions;
+        }
+    }
+
     filters.isActive = true;
-
-
 
     // Step 2: Determine sort options
     let sortOptions = {};
