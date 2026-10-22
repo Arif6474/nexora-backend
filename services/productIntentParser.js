@@ -119,17 +119,31 @@ const COLOR_MAP = [
     }
 ];
 
+// Spelled-out size normalization map
+const SIZE_WORD_MAP = {
+    'extra small': 'XS', 'xs': 'XS',
+    'small': 'S', 's': 'S',
+    'medium': 'M', 'm': 'M',
+    'large': 'L', 'l': 'L',
+    'extra large': 'XL', 'xl': 'XL',
+    'double extra large': 'XXL', 'xxl': 'XXL', 'xx large': 'XXL',
+    // Italian
+    'piccola': 'S', 'piccolo': 'S', 'media': 'M', 'medio': 'M', 'grande': 'L', 'grandi': 'L',
+    // Bengali/Banglish
+    'chhoto': 'S', 'mejo': 'M', 'boro': 'L'
+};
+
 // Conversational stop words to remove
 const CONVERSATIONAL_STOP_WORDS = [
     // English
-    /\b(show me|do you have|i need|i want|find me|find|looking for|can i see|are there|tell me about|what are|please|available|collection|best|pieces|items|under|below|less than|sotto\s+i|over|above|more than|sopra\s+i)\b/gi,
+    /\b(show me|do you have|i need|i want|find me|find|looking for|can i see|are there|tell me about|what are|what about|how about|please|available|collection|best|pieces|items|under|below|less than|sotto\s+i|over|above|more than|sopra\s+i)\b/gi,
     // Bengali & Banglish
-    /(আমাকে দেখান|আমাকে দেখাও|আছে কি|আছে|দেখান|দেখাও|খুঁজে দিন|পাওয়া যাবে|চাই|দরকার|লাগবে|কোনো|আমারে|আমার|হবে|মধ্যে|ভিতরে|কম|বেশি)/gu,
-    /\b(ache|achhe|dekhaw|dekhao|dekhaben|lagbe|chai|dorkar|hobe|amake|apnader|kono|pabo|parbo|moddhe|moddhey|vitore|kom|beshi)\b/gi,
+    /(আমাকে দেখান|আমাকে দেখাও|আছে কি|আছে|দেখান|দেখাও|খুঁজে দিন|পাওয়া যাবে|চাই|দরকার|লাগবে|কোনো|আমারে|আমার|হবে|মধ্যে|ভিতরে|কম|বেশি|আর|বা)/gu,
+    /\b(ache|achhe|dekhaw|dekhao|dekhaben|lagbe|chai|dorkar|hobe|amake|apnader|kono|pabo|parbo|moddhe|moddhey|vitore|kom|beshi|ar|ba)\b/gi,
     // Italian
-    /\b(avete|mostrami|vorrei|cerco|ci sono|per favore|potete mostrarmi|disponibili|disponibile|qualcosa di|sotto|sopra)\b/gi,
+    /\b(avete|mostrami|vorrei|cerco|ci sono|per favore|potete mostrarmi|disponibili|disponibile|qualcosa di|sotto|sopra|e invece|cosa ne pensi di)\b/gi,
     // Hindi
-    /(क्या आपके पास|दिखाइए|दिखाओ|चाहिए|मुझे|उपलब्ध है|क्या है|खोजिए|से कम|से अधिक|के नीचे|के अंदर|है)/gu
+    /(क्या आपके पास|दिखाइए|दिखाओ|चाहिए|मुझे|उपलब्ध है|क्या है|खोजिए|से कम|से अधिक|के नीचे|के अंदर|है|के बारे में|और)/gu
 ];
 
 /**
@@ -137,7 +151,7 @@ const CONVERSATIONAL_STOP_WORDS = [
  */
 export function parseProductSearchIntent(message = '') {
     const raw = (message || '').trim();
-    if (!raw) return { categorySlug: null, color: null, minPrice: null, maxPrice: null, cleanQuery: '' };
+    if (!raw) return { categorySlug: null, color: null, size: null, minPrice: null, maxPrice: null, cleanQuery: '' };
 
     // 1. Extract category slug
     let categorySlug = null;
@@ -158,7 +172,25 @@ export function parseProductSearchIntent(message = '') {
         }
     }
 
-    // 3. Extract price constraints
+    // 3. Extract size
+    let detectedSize = null;
+    for (const [word, abbr] of Object.entries(SIZE_WORD_MAP)) {
+        if (word.length > 1 && new RegExp(`\\b${word}\\b`, 'i').test(lower)) {
+            detectedSize = abbr;
+            break;
+        }
+    }
+    if (!detectedSize) {
+        const sizeAbbrMatch = lower.match(/\b(?:size\s+)?([smlxl]{1,3}|xs|xxl|\d{2})\b/i);
+        if (sizeAbbrMatch) {
+            const candidate = sizeAbbrMatch[1].toUpperCase();
+            if (['S', 'M', 'L', 'XL', 'XS', 'XXL'].includes(candidate) || /^\d{2}$/.test(candidate)) {
+                detectedSize = candidate;
+            }
+        }
+    }
+
+    // 4. Extract price constraints
     // Bengali digits to standard digits
     const normalizedDigits = raw.replace(/[০-৯]/g, d => '০১২৩৪৫৬৭৮৯'.indexOf(d));
 
@@ -181,7 +213,7 @@ export function parseProductSearchIntent(message = '') {
         minPrice = parseFloat(minMatch[1]);
     }
 
-    // 4. Clean search query
+    // 5. Clean search query
     let cleaned = normalizedDigits
         .replace(/[$৳]|taka|takar|টাকা|टका/gi, ' ')
         .replace(/[?।!.,;:()]/g, ' ')
@@ -200,6 +232,11 @@ export function parseProductSearchIntent(message = '') {
         }
     }
 
+    // If size was detected, remove size terms from clean query
+    if (detectedSize) {
+        cleaned = cleaned.replace(/\b(size|taglia|সাইজ|साइज|medium|large|small|extra small|extra large|xxl|xs|xl|s|m|l)\b/gi, ' ');
+    }
+
     // If category was detected, remove category words from clean query
     if (categorySlug) {
         const cat = CATEGORY_MAP.find(c => c.slug === categorySlug);
@@ -212,14 +249,15 @@ export function parseProductSearchIntent(message = '') {
 
     cleaned = cleaned.replace(/\s+/g, ' ').trim();
 
-    // If category was already detected and the remaining query is short residual particle (e.g. "r", "র", "का"), clear it
-    if (categorySlug && cleaned.length <= 2) {
+    // If category, color, or size was already detected and remaining query is short residual particle (e.g. "r", "র", "কা", "in"), clear it
+    if ((categorySlug || detectedColor || detectedSize) && (cleaned.length <= 3 || /^(in|with|of|er|da|di|con|ka|ki|ke|র|এর|তে|এ)$/i.test(cleaned))) {
         cleaned = '';
     }
 
     return {
         categorySlug,
         color: detectedColor,
+        size: detectedSize,
         minPrice,
         maxPrice,
         cleanQuery: cleaned

@@ -250,7 +250,10 @@ Instructions:
         if (followUp.categorySlug && !parsedIntent.categorySlug) {
             parsedIntent.categorySlug = followUp.categorySlug;
         }
-        if (followUp.size) {
+        if (followUp.color && !parsedIntent.color) {
+            parsedIntent.color = followUp.color;
+        }
+        if (followUp.size && !parsedIntent.size) {
             parsedIntent.size = followUp.size;
         }
     }
@@ -260,16 +263,18 @@ Instructions:
         query: parsedIntent.cleanQuery,
         category: parsedIntent.categorySlug,
         color: parsedIntent.color,
+        size: parsedIntent.size,
         minPrice: parsedIntent.minPrice,
         maxPrice: parsedIntent.maxPrice,
         limit: 6
     });
 
-    // If no products found with exact combination, relax text query while retaining category/price/color
-    if (productsPayload.length === 0 && (parsedIntent.categorySlug || parsedIntent.color || parsedIntent.maxPrice)) {
+    // If no products found with exact combination, relax text query while retaining category/price/color/size
+    if (productsPayload.length === 0 && (parsedIntent.categorySlug || parsedIntent.color || parsedIntent.size || parsedIntent.maxPrice)) {
         productsPayload = await productQueryService.searchProducts({
             category: parsedIntent.categorySlug,
             color: parsedIntent.color,
+            size: parsedIntent.size,
             minPrice: parsedIntent.minPrice,
             maxPrice: parsedIntent.maxPrice,
             limit: 6
@@ -279,9 +284,10 @@ Instructions:
     // Build LLM context from verified products only
     let productFactsText = '';
     if (productsPayload.length > 0) {
-        productFactsText = productsPayload.map((p, idx) =>
-            `${idx + 1}. "${p.title}" | Price: $${p.price} (Final: $${p.finalPrice}) | Category: ${p.category} | Brand: ${p.brand} | In Stock: ${p.inStock ? 'Yes' : 'No'} | Colors: ${p.colors.join(', ') || 'Standard'}`
-        ).join('\n');
+        productFactsText = productsPayload.map((p, idx) => {
+            const sizeList = (p.sizes || []).filter(s => s.inStock).map(s => s.size).join(', ') || 'Standard';
+            return `${idx + 1}. "${p.title}" | Price: $${p.price} (Final: $${p.finalPrice}) | Category: ${p.category} | Brand: ${p.brand} | In Stock: ${p.inStock ? 'Yes' : 'No'} | Colors: ${p.colors.join(', ') || 'Standard'} | Available Sizes: ${sizeList}`;
+        }).join('\n');
     }
 
     let comparisonInstruction = '';

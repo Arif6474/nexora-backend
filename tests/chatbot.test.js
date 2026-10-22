@@ -380,3 +380,131 @@ test('Conversation Context - preserves product context across multi-turn follow-
     assert.equal(followUpBn.isFollowUp, true);
     assert.equal(followUpBn.categorySlug, 'blazers-tailoring');
 });
+
+// Helper for testing HTTP controllers
+function createMockHttp(reqData) {
+    let statusCode = 200;
+    let responseData = null;
+    const req = {
+        sanitizedMessage: reqData.message,
+        body: { message: reqData.message },
+        safeConversationHistory: reqData.conversationHistory || [],
+        customer: reqData.customer || null,
+        ...reqData
+    };
+    const res = {
+        status(code) {
+            statusCode = code;
+            return this;
+        },
+        json(payload) {
+            responseData = payload;
+            return this;
+        }
+    };
+    return { req, res, getResult: () => ({ statusCode, data: responseData }) };
+}
+
+// 29. CONTROLLER INTEGRATION: GUEST CHECKOUT WITH & WITHOUT AUTH
+test('Controller Integration - guest checkout query returns order: null with and without auth', async () => {
+    const { handleChatMessage } = await import('../controllers/chatbotController.js');
+
+    // Case 1: Unauthenticated guest
+    const guestHttp = createMockHttp({ message: 'login kra chara order krte parbo?' });
+    await handleChatMessage(guestHttp.req, guestHttp.res);
+    const guestRes = guestHttp.getResult();
+    assert.equal(guestRes.statusCode, 200);
+    assert.equal(guestRes.data.intent, 'guest_checkout');
+    assert.equal(guestRes.data.order, null, 'Must not return order object');
+    assert.equal(guestRes.data.requiresAuth, false);
+    assert.equal(guestRes.data.verifiedSource, 'store_policy');
+
+    // Case 2: Authenticated customer asking about guest checkout
+    const authedHttp = createMockHttp({
+        message: 'Can I order without logging in?',
+        customer: { _id: new mongoose.Types.ObjectId() }
+    });
+    await handleChatMessage(authedHttp.req, authedHttp.res);
+    const authedRes = authedHttp.getResult();
+    assert.equal(authedRes.statusCode, 200);
+    assert.equal(authedRes.data.intent, 'guest_checkout');
+    assert.equal(authedRes.data.order, null, 'Must never return order card even when authenticated');
+    assert.equal(authedRes.data.verifiedSource, 'store_policy');
+});
+
+// 30. CONTROLLER INTEGRATION: ORDER TRACKING AUTH & OWNERSHIP
+test('Controller Integration - order tracking enforces customer ownership end-to-end', async () => {
+    const { handleChatMessage } = await import('../controllers/chatbotController.js');
+    const Order = (await import('#models/order/orderModel.js')).default;
+    const existingOrder = await Order.findOne();
+
+    if (existingOrder) {
+        // Unauthenticated request
+        const unauthedHttp = createMockHttp({ message: `Track my order ${existingOrder.orderId}` });
+        await handleChatMessage(unauthedHttp.req, unauthedHttp.res);
+        const unauthedRes = unauthedHttp.getResult();
+        assert.equal(unauthedRes.data.requiresAuth, true);
+        assert.equal(unauthedRes.data.order, null);
+
+        // Legitimate order owner
+        const ownerHttp = createMockHttp({
+            message: `Track my order ${existingOrder.orderId}`,
+            customer: { _id: existingOrder.customer }
+        });
+        await handleChatMessage(ownerHttp.req, ownerHttp.res);
+        const ownerRes = ownerHttp.getResult();
+        assert.equal(ownerRes.data.intent, 'order_tracking');
+        assert.equal(ownerRes.data.verifiedSource, 'order_service');
+        assert.equal(ownerRes.data.order?.orderId, existingOrder.orderId);
+
+        // Unauthorized customer
+        const otherHttp = createMockHttp({
+            message: `Track my order ${existingOrder.orderId}`,
+            customer: { _id: new mongoose.Types.ObjectId() }
+        });
+        await handleChatMessage(otherHttp.req, otherHttp.res);
+        const otherRes = otherHttp.getResult();
+        assert.equal(otherRes.data.order, null, 'Must not disclose foreign orders');
+    }
+});
+
+// 31. RELATIONAL VARIANT INTERSECTION
+test('Relational Variant Intersection - simultaneous color and size queries preserve matches', async () => {
+    const { productQueryService } = await import('../services/productQueryService.js');
+
+    const products = await productQueryService.searchProducts({
+        category: 'blazers-tailoring',
+        color: 'black',
+        size: 'M'
+    });
+    assert.ok(Array.isArray(products));
+    assert.ok(products.length > 0, 'Should find black blazers in size M');
+    assert.ok(products.every(p => p.sizes.some(s => s.size === 'M' && s.inStock)), 'All returned items must have size M in stock');
+});
+
+// 32. MULTI-TURN CONTROLLER EXECUTION
+test('Multi-Turn Controller Execution - follow-up preserves category, color, and size in database search', async () => {
+    const { handleChatMessage } = await import('../controllers/chatbotController.js');
+
+    const history = [
+        { role: 'user', content: 'Show me black blazers' },
+        { role: 'assistant', content: 'Here are our blazers in black.' }
+    ];
+
+    const followUpHttp = createMockHttp({
+        message: 'Do you have medium?',
+        conversationHistory: history
+    });
+
+    await handleChatMessage(followUpHttp.req, followUpHttp.res);
+    const result = followUpHttp.getResult();
+
+    assert.equal(result.statusCode, 200);
+    assert.equal(result.data.intent, 'product_search');
+    assert.ok(result.data.products.length > 0, 'Should find products matching merged context');
+    assert.ok(
+        result.data.products.every(p => p.sizes.some(s => s.size === 'M' && s.inStock)),
+        'All products must have medium size in stock'
+    );
+});
+

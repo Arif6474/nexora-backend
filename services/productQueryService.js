@@ -174,8 +174,9 @@ class ProductQueryService {
                 const colorIds = colorDocs.map(c => c._id);
                 const productColors = await ProductColor.find({ color: { $in: colorIds }, isActive: true }).select('product');
                 const productIdsWithColor = productColors.map(pc => pc.product);
-                if (filters._id) {
-                    filters._id = { $in: productIdsWithColor.filter(id => filters._id.$in?.includes(id)) };
+                if (filters._id && filters._id.$in) {
+                    const existingStrSet = new Set(filters._id.$in.map(String));
+                    filters._id.$in = productIdsWithColor.filter(id => existingStrSet.has(String(id)));
                 } else {
                     filters._id = { $in: productIdsWithColor };
                 }
@@ -194,8 +195,9 @@ class ProductQueryService {
                     quantity: { $gt: 0 }
                 }).select('product');
                 const productIdsWithSize = productSizes.map(ps => ps.product);
-                if (filters._id) {
-                    filters._id = { $in: productIdsWithSize.filter(id => filters._id.$in?.includes(id)) };
+                if (filters._id && filters._id.$in) {
+                    const existingStrSet = new Set(filters._id.$in.map(String));
+                    filters._id.$in = productIdsWithSize.filter(id => existingStrSet.has(String(id)));
                 } else {
                     filters._id = { $in: productIdsWithSize };
                 }
