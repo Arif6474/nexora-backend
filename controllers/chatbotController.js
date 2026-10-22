@@ -1,4 +1,6 @@
 import asyncHandler from 'express-async-handler';
+import crypto from 'crypto';
+import mongoose from 'mongoose';
 import ollamaService from '../services/ollamaService.js';
 import productQueryService from '../services/productQueryService.js';
 import orderQueryService from '../services/orderQueryService.js';
@@ -7,24 +9,114 @@ import { STORE_POLICIES, getPolicyAnswer } from '../services/storePolicyService.
 import { parseProductSearchIntent } from '../services/productIntentParser.js';
 import intentClassifier from '../services/intentClassifier.js';
 import conversationContextManager from '../services/conversationContextManager.js';
+import Conversation from '#models/conversationModel.js';
 
 /**
- * Handle incoming customer chat message with strict routing, grounding, and privacy.
+ * Handle incoming customer chat message with strict routing, grounding, privacy,
+ * and conversation persistence with context isolation.
  */
 export const handleChatMessage = asyncHandler(async (req, res) => {
     const rawMessage = req.sanitizedMessage || (req.body && req.body.message) || '';
     const history = req.safeConversationHistory || [];
     const customer = req.customer; // Attached by optionalCustomerAuth if customer is logged in
 
-    // 1. Language detection
+    const targetConversationId = req.conversationId || req.body?.conversationId;
+    const targetSessionId = req.sessionId || req.body?.sessionId;
+    let conversation = null;
+
+    // 1. Conversation session lookup with strict customer isolation
+    try {
+        if (customer) {
+            if (targetConversationId && mongoose.Types.ObjectId.isValid(targetConversationId)) {
+                // Strict customer ownership: customer cannot access or append to another customer's conversation
+                conversation = await Conversation.findOne({
+                    _id: targetConversationId,
+                    customer: customer._id,
+                    isActive: true
+                });
+            }
+            if (!conversation) {
+                // Start a new isolated conversation for this customer
+                conversation = await Conversation.create({
+                    customer: customer._id,
+                    sessionId: targetSessionId || crypto.randomUUID(),
+                    title: 'New Consultation',
+                    messages: []
+                });
+            }
+        } else if (targetSessionId) {
+            // Guest conversation strictly isolated by sessionId and customer: null
+            conversation = await Conversation.findOne({
+                sessionId: targetSessionId,
+                customer: null,
+                isActive: true
+            });
+            if (!conversation) {
+                conversation = await Conversation.create({
+                    customer: null,
+                    sessionId: targetSessionId,
+                    title: 'Guest Chat',
+                    messages: []
+                });
+            }
+        }
+    } catch (err) {
+        console.warn('Conversation init warning:', err.message);
+    }
+
+    // 2. Hydrate effective history from database if client sent empty history
+    let effectiveHistory = history;
+    if (effectiveHistory.length === 0 && conversation && Array.isArray(conversation.messages) && conversation.messages.length > 0) {
+        effectiveHistory = conversation.messages.slice(-8).map(m => ({
+            role: m.role,
+            content: m.content
+        }));
+    }
+
+    // 3. Language detection
     const detectedLang = multilingualService.detectLanguage(rawMessage);
     const languageInstructions = multilingualService.getLanguagePromptInstructions(detectedLang);
 
-    // 2. Extract conversation context from prior turns
-    const previousContext = conversationContextManager.extractContext(history);
+    // 4. Extract conversation context from prior turns
+    const previousContext = conversationContextManager.extractContext(effectiveHistory);
 
-    // 3. Robust Intent & Entity Classification
+    // 5. Robust Intent & Entity Classification
     const { intent, orderIdCandidate, confidence } = intentClassifier.classify(rawMessage, { previousContext });
+
+    // Helper to persist conversation turn and return standard JSON
+    const sendChatResponse = async (payload, status = 200) => {
+        if (conversation) {
+            try {
+                conversation.messages.push({
+                    role: 'user',
+                    content: rawMessage,
+                    timestamp: new Date()
+                });
+                conversation.messages.push({
+                    role: 'assistant',
+                    content: payload.message || '',
+                    intent: payload.intent || intent,
+                    language: payload.language || detectedLang,
+                    products: payload.products || [],
+                    order: payload.order || null,
+                    requiresAuth: !!payload.requiresAuth,
+                    verifiedSource: payload.verifiedSource || null,
+                    quickReplies: payload.quickReplies || [],
+                    timestamp: new Date()
+                });
+                conversation.lastMessageAt = new Date();
+                if ((!conversation.title || conversation.title === 'New Consultation' || conversation.title === 'Guest Chat') && rawMessage) {
+                    conversation.title = rawMessage.slice(0, 45).trim() || conversation.title;
+                }
+                await conversation.save();
+                payload.conversationId = conversation._id;
+                payload.sessionId = conversation.sessionId;
+            } catch (err) {
+                console.warn('Conversation save warning:', err.message);
+            }
+        }
+        return res.status(status).json(payload);
+    };
 
     // ----------------------------------------------------
     // SCENARIO 1: GREETINGS & CASUAL HELLOS
@@ -41,7 +133,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
             greetingText = 'Welcome to Nexora. How may I assist you today? Feel free to explore our curated collections, inquire about your orders, or ask about our shipping and store policies.';
         }
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: greetingText,
             language: detectedLang,
@@ -61,7 +153,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
     if (intent === 'guest_checkout') {
         const responseText = multilingualService.getGuestCheckoutResponse(detectedLang);
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: responseText,
             language: detectedLang,
@@ -81,7 +173,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
     if (intent === 'ambiguous_request') {
         const responseText = multilingualService.getAmbiguousResponse(detectedLang);
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: responseText,
             language: detectedLang,
@@ -100,7 +192,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
     if (intent === 'order_cancellation') {
         const responseText = multilingualService.getOrderCancellationResponse(detectedLang);
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: responseText,
             language: detectedLang,
@@ -130,7 +222,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
                 guestMsg = 'To track and view your order details securely, please sign in to your Nexora account. We keep all customer order information strictly confidential.';
             }
 
-            return res.status(200).json({
+            return await sendChatResponse({
                 success: true,
                 message: guestMsg,
                 language: detectedLang,
@@ -174,7 +266,7 @@ export const handleChatMessage = asyncHandler(async (req, res) => {
             quickReplies = ['Track another order', 'Shipping Policy', 'Contact Concierge'];
         }
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: responseText,
             language: detectedLang,
@@ -212,7 +304,7 @@ Instructions:
 - Do NOT alter any numeric figures (e.g. $200 threshold, 3-5 business days, 30-day return).
 - Keep the tone polite, elegant, and concise.`
             },
-            ...history,
+            ...effectiveHistory,
             { role: 'user', content: rawMessage }
         ];
 
@@ -224,7 +316,7 @@ Instructions:
 
         const quickReplies = ['Browse Catalog', 'Shipping Details', 'Return Policy', 'Contact Concierge'];
 
-        return res.status(200).json({
+        return await sendChatResponse({
             success: true,
             message: responseText,
             language: detectedLang,
@@ -309,7 +401,7 @@ ${productFactsText || 'No matching products were found in the database.'}
 
     const aiMessages = [
         { role: 'system', content: systemPrompt },
-        ...history,
+        ...effectiveHistory,
         { role: 'user', content: rawMessage }
     ];
 
@@ -350,7 +442,7 @@ ${productFactsText || 'No matching products were found in the database.'}
         'Shipping & Returns'
     ];
 
-    return res.status(200).json({
+    return await sendChatResponse({
         success: true,
         message: responseText,
         language: detectedLang,
@@ -360,6 +452,182 @@ ${productFactsText || 'No matching products were found in the database.'}
         quickReplies,
         verifiedSource,
         modelUsed: aiResult.model || 'deterministic-engine'
+    });
+});
+
+/**
+ * Start a fresh conversation (New Chat) with isolated context
+ */
+export const startNewChat = asyncHandler(async (req, res) => {
+    const customer = req.customer;
+    const newSessionId = crypto.randomUUID();
+
+    let conversation = null;
+    if (customer) {
+        conversation = await Conversation.create({
+            customer: customer._id,
+            sessionId: newSessionId,
+            title: 'New Consultation',
+            messages: []
+        });
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'New conversation started',
+        conversationId: conversation?._id || null,
+        sessionId: newSessionId
+    });
+});
+
+/**
+ * List customer conversations with ownership isolation
+ */
+export const getCustomerConversations = asyncHandler(async (req, res) => {
+    const customer = req.customer;
+    if (!customer) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required to view conversations.',
+            conversations: []
+        });
+    }
+
+    const conversations = await Conversation.find({
+        customer: customer._id,
+        isActive: true
+    })
+        .select('_id sessionId title lastMessageAt createdAt messages')
+        .sort({ lastMessageAt: -1 })
+        .limit(30)
+        .lean();
+
+    const formatted = conversations.map(c => {
+        const lastMsg = c.messages?.[c.messages.length - 1];
+        return {
+            id: c._id,
+            sessionId: c.sessionId,
+            title: c.title || 'Consultation',
+            lastMessageAt: c.lastMessageAt || c.createdAt,
+            messageCount: c.messages?.length || 0,
+            preview: lastMsg?.content ? lastMsg.content.slice(0, 80) : ''
+        };
+    });
+
+    res.status(200).json({
+        success: true,
+        conversations: formatted
+    });
+});
+
+/**
+ * Retrieve single conversation by ID with strict customer ownership check
+ */
+export const getConversationById = asyncHandler(async (req, res) => {
+    const customer = req.customer;
+    const { id } = req.params;
+
+    if (!customer) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required to view conversation.'
+        });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid conversation ID format.'
+        });
+    }
+
+    // Strict customer isolation: query includes customer._id
+    const conversation = await Conversation.findOne({
+        _id: id,
+        customer: customer._id,
+        isActive: true
+    }).lean();
+
+    if (!conversation) {
+        return res.status(404).json({
+            success: false,
+            message: 'Conversation not found or access denied.'
+        });
+    }
+
+    res.status(200).json({
+        success: true,
+        conversation: {
+            id: conversation._id,
+            sessionId: conversation.sessionId,
+            title: conversation.title,
+            messages: conversation.messages,
+            lastMessageAt: conversation.lastMessageAt,
+            createdAt: conversation.createdAt
+        }
+    });
+});
+
+/**
+ * Soft delete single conversation with ownership verification
+ */
+export const deleteConversation = asyncHandler(async (req, res) => {
+    const customer = req.customer;
+    const { id } = req.params;
+
+    if (!customer) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required.'
+        });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({
+            success: false,
+            message: 'Invalid conversation ID format.'
+        });
+    }
+
+    const result = await Conversation.findOneAndUpdate(
+        { _id: id, customer: customer._id, isActive: true },
+        { isActive: false },
+        { new: true }
+    );
+
+    if (!result) {
+        return res.status(404).json({
+            success: false,
+            message: 'Conversation not found or access denied.'
+        });
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'Conversation deleted successfully.'
+    });
+});
+
+/**
+ * Clear all conversations for authenticated customer
+ */
+export const clearCustomerConversations = asyncHandler(async (req, res) => {
+    const customer = req.customer;
+    if (!customer) {
+        return res.status(401).json({
+            success: false,
+            message: 'Authentication required.'
+        });
+    }
+
+    await Conversation.updateMany(
+        { customer: customer._id, isActive: true },
+        { isActive: false }
+    );
+
+    res.status(200).json({
+        success: true,
+        message: 'All conversations cleared successfully.'
     });
 });
 

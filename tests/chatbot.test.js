@@ -508,3 +508,199 @@ test('Multi-Turn Controller Execution - follow-up preserves category, color, and
     );
 });
 
+// 33. CONVERSATION PERSISTENCE
+test('Conversation Persistence - saves user and assistant messages to active session document', async () => {
+    const { handleChatMessage, startNewChat } = await import('../controllers/chatbotController.js');
+    const Conversation = (await import('#models/conversationModel.js')).default;
+    const testCustomerId = new mongoose.Types.ObjectId();
+
+    // Start new chat
+    const startHttp = createMockHttp({ customer: { _id: testCustomerId } });
+    await startNewChat(startHttp.req, startHttp.res);
+    const startRes = startHttp.getResult();
+    assert.equal(startRes.statusCode, 200);
+    assert.ok(startRes.data.conversationId, 'Should return conversationId');
+
+    // Send message within this conversation
+    const msgHttp = createMockHttp({
+        message: 'Do you have black shirts?',
+        conversationId: startRes.data.conversationId,
+        customer: { _id: testCustomerId }
+    });
+    await handleChatMessage(msgHttp.req, msgHttp.res);
+    const msgRes = msgHttp.getResult();
+    assert.equal(msgRes.statusCode, 200);
+    assert.equal(String(msgRes.data.conversationId), String(startRes.data.conversationId));
+
+    // Verify persisted document in MongoDB
+    const savedDoc = await Conversation.findById(startRes.data.conversationId);
+    assert.ok(savedDoc, 'Conversation document must exist in DB');
+    assert.equal(savedDoc.messages.length, 2, 'Must have 2 messages (user + assistant)');
+    assert.equal(savedDoc.messages[0].role, 'user');
+    assert.equal(savedDoc.messages[0].content, 'Do you have black shirts?');
+    assert.equal(savedDoc.messages[1].role, 'assistant');
+    assert.equal(savedDoc.messages[1].verifiedSource, 'mongodb');
+
+    // Clean up test document
+    await Conversation.findByIdAndDelete(startRes.data.conversationId);
+});
+
+// 34. CONTEXT & OWNERSHIP ISOLATION
+test('Context & Ownership Isolation - prevents cross-customer conversation access and deletion', async () => {
+    const { getConversationById, deleteConversation, handleChatMessage } = await import('../controllers/chatbotController.js');
+    const Conversation = (await import('#models/conversationModel.js')).default;
+
+    const customerA = new mongoose.Types.ObjectId();
+    const customerB = new mongoose.Types.ObjectId();
+
+    // Create conversation owned by Customer A
+    const convA = await Conversation.create({
+        customer: customerA,
+        sessionId: 'test-session-a',
+        title: 'Customer A Private Consultation',
+        messages: [{ role: 'user', content: 'Secret inquiry A' }]
+    });
+
+    // Customer B tries to view Customer A conversation
+    const viewHttp = createMockHttp({
+        customer: { _id: customerB },
+        params: { id: String(convA._id) }
+    });
+    viewHttp.req.params = { id: String(convA._id) };
+    await getConversationById(viewHttp.req, viewHttp.res);
+    const viewRes = viewHttp.getResult();
+    assert.equal(viewRes.statusCode, 404, 'Must return 404/denied for cross-customer read');
+
+    // Customer B tries to delete Customer A conversation
+    const delHttp = createMockHttp({
+        customer: { _id: customerB },
+        params: { id: String(convA._id) }
+    });
+    delHttp.req.params = { id: String(convA._id) };
+    await deleteConversation(delHttp.req, delHttp.res);
+    const delRes = delHttp.getResult();
+    assert.equal(delRes.statusCode, 404, 'Must return 404/denied for cross-customer delete');
+
+    // Customer B sends message attempting to hijack Customer A conversationId
+    const hijackHttp = createMockHttp({
+        customer: { _id: customerB },
+        message: 'Hijack attempt',
+        conversationId: String(convA._id)
+    });
+    await handleChatMessage(hijackHttp.req, hijackHttp.res);
+    const hijackRes = hijackHttp.getResult();
+    assert.notEqual(
+        String(hijackRes.data.conversationId),
+        String(convA._id),
+        'Must create isolated conversation for Customer B instead of writing to Customer A'
+    );
+
+    // Clean up created test documents
+    await Conversation.deleteMany({ _id: { $in: [convA._id, hijackRes.data.conversationId] } });
+});
+
+// 35. NEW CHAT SESSION RESET & CONTEXT PURGE
+test('New Chat Session Reset - starts clean conversation session with fresh context', async () => {
+    const { startNewChat, handleChatMessage } = await import('../controllers/chatbotController.js');
+    const Conversation = (await import('#models/conversationModel.js')).default;
+    const testCustomer = new mongoose.Types.ObjectId();
+
+    // Turn 1 in Conversation 1
+    const chat1Res = createMockHttp({ customer: { _id: testCustomer } });
+    await startNewChat(chat1Res.req, chat1Res.res);
+    const conv1Id = chat1Res.getResult().data.conversationId;
+
+    const msg1 = createMockHttp({
+        customer: { _id: testCustomer },
+        conversationId: conv1Id,
+        message: 'Show me black blazers'
+    });
+    await handleChatMessage(msg1.req, msg1.res);
+
+    // Start New Chat (Session 2)
+    const chat2Res = createMockHttp({ customer: { _id: testCustomer } });
+    await startNewChat(chat2Res.req, chat2Res.res);
+    const conv2Id = chat2Res.getResult().data.conversationId;
+    assert.notEqual(String(conv1Id), String(conv2Id), 'New chat must have a distinct conversationId');
+
+    // Query in Session 2 should NOT carry over Session 1 filters unless explicitly mentioned
+    const msg2 = createMockHttp({
+        customer: { _id: testCustomer },
+        conversationId: conv2Id,
+        message: 'Do you have silk dresses?'
+    });
+    await handleChatMessage(msg2.req, msg2.res);
+    const res2 = msg2.getResult();
+    assert.equal(res2.data.intent, 'product_search');
+    assert.equal(String(res2.data.conversationId), String(conv2Id));
+
+    // Clean up created test documents
+    await Conversation.deleteMany({ _id: { $in: [conv1Id, conv2Id] } });
+});
+
+// 36. GUEST CONVERSATION ISOLATION & ACCESS CONTROL
+test('Guest Isolation - prevents guest access to history endpoints and isolates guest sessions', async () => {
+    const {
+        getCustomerConversations,
+        getConversationById,
+        deleteConversation,
+        clearCustomerConversations,
+        handleChatMessage
+    } = await import('../controllers/chatbotController.js');
+    const Conversation = (await import('#models/conversationModel.js')).default;
+
+    // 1. Unauthenticated guest attempts to call customer conversation management endpoints
+    const listGuest = createMockHttp({ customer: null });
+    await getCustomerConversations(listGuest.req, listGuest.res);
+    assert.equal(listGuest.getResult().statusCode, 401, 'Guest listing conversations must return 401');
+
+    const viewGuest = createMockHttp({ customer: null, params: { id: new mongoose.Types.ObjectId().toString() } });
+    viewGuest.req.params = { id: new mongoose.Types.ObjectId().toString() };
+    await getConversationById(viewGuest.req, viewGuest.res);
+    assert.equal(viewGuest.getResult().statusCode, 401, 'Guest reading single conversation must return 401');
+
+    const delGuest = createMockHttp({ customer: null, params: { id: new mongoose.Types.ObjectId().toString() } });
+    delGuest.req.params = { id: new mongoose.Types.ObjectId().toString() };
+    await deleteConversation(delGuest.req, delGuest.res);
+    assert.equal(delGuest.getResult().statusCode, 401, 'Guest deleting conversation must return 401');
+
+    const clearGuest = createMockHttp({ customer: null });
+    await clearCustomerConversations(clearGuest.req, clearGuest.res);
+    assert.equal(clearGuest.getResult().statusCode, 401, 'Guest clearing conversations must return 401');
+
+    // 2. Guest isolation between different guest sessions
+    const guest1Session = `guest-test-${Date.now()}-1`;
+    const guest2Session = `guest-test-${Date.now()}-2`;
+
+    const guest1Msg = createMockHttp({
+        customer: null,
+        sessionId: guest1Session,
+        message: 'Hello as guest 1'
+    });
+    await handleChatMessage(guest1Msg.req, guest1Msg.res);
+    const guest1Res = guest1Msg.getResult();
+    assert.equal(guest1Res.statusCode, 200);
+
+    const doc1 = await Conversation.findOne({ sessionId: guest1Session, customer: null });
+    assert.ok(doc1, 'Guest 1 conversation must exist');
+    assert.equal(doc1.messages.length, 2);
+
+    // Guest 2 cannot see or write into Guest 1 conversation
+    const guest2Msg = createMockHttp({
+        customer: null,
+        sessionId: guest2Session,
+        message: 'Hello as guest 2'
+    });
+    await handleChatMessage(guest2Msg.req, guest2Msg.res);
+    const guest2Res = guest2Msg.getResult();
+    assert.equal(guest2Res.statusCode, 200);
+
+    const doc2 = await Conversation.findOne({ sessionId: guest2Session, customer: null });
+    assert.ok(doc2, 'Guest 2 conversation must exist separately');
+    assert.notEqual(String(doc1._id), String(doc2._id), 'Guest sessions must be completely isolated');
+
+    // Clean up test documents
+    await Conversation.deleteMany({ sessionId: { $in: [guest1Session, guest2Session] } });
+});
+
+

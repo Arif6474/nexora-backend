@@ -119,6 +119,13 @@ export const validateChatbotInput = (req, res, next) => {
             }));
     }
 
+    if (req.body?.conversationId && typeof req.body.conversationId === 'string') {
+        req.conversationId = req.body.conversationId.trim();
+    }
+    if (req.body?.sessionId && typeof req.body.sessionId === 'string') {
+        req.sessionId = req.body.sessionId.trim().slice(0, 100);
+    }
+
     req.sanitizedMessage = sanitizedMessage;
     req.safeConversationHistory = safeHistory;
     next();
